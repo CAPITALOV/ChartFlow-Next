@@ -1,6 +1,6 @@
 """
-ChartFlow / StockForecast V3 — FastAPI backend.
-Реальные модели прогноза, верификация, авторизация, админка.
+ChartFlow / StockForecast V3.1 — FastAPI backend.
+Реальные модели прогноза, верификация, авторизация, админка, multi-прогноз.
 """
 import logging
 from contextlib import asynccontextmanager
@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="ChartFlow Forecast Engine API",
-    version="3.0.0",
+    version="3.1.0",
     lifespan=lifespan,
 )
 
@@ -150,7 +150,7 @@ def root():
     return {
         "status": "online",
         "system": "ChartFlow FastAPI Core",
-        "version": "3.0.0",
+        "version": "3.1.0",
         "statsmodels": HAS_STATSMODELS,
         "models": list(MODELS.keys()),
     }
@@ -253,7 +253,7 @@ def backfill(ticker: str, days: int = Query(730, ge=90, le=3650), db: Session = 
     return {"ticker": ticker.upper(), "fetched": len(fetched), "inserted": inserted}
 
 
-# ---------- Forecast ----------
+# ---------- Forecast (single model) ----------
 
 @app.post("/api/v1/forecast", response_model=ForecastOut)
 def forecast(
@@ -342,6 +342,8 @@ def forecast(
     )
 
 
+# ---------- Runs / stats ----------
+
 @app.get("/api/v1/runs/{ticker}", response_model=list[RunOut])
 def list_runs(
     ticker: str,
@@ -421,6 +423,162 @@ def rm_watch(ticker: str, db: Session = Depends(get_db), user: User = Depends(re
         db.delete(item)
         db.commit()
     return {"ok": True}
+
+
+# ---------- Multi-model forecast (3 lines) ----------
+
+class MultiForecastPoint(BaseModel):
+    date: str
+    price: float
+
+
+class MultiForecastSeries(BaseModel):
+    model: str
+    mape: Optional[float]           # из backtest (завершённые прогоны)
+    color: str                      # для фронтенда
+    target_price: float
+    change_percent: float
+    points: list[MultiForecastPoint]
+
+
+class MultiForecastOut(BaseModel):
+    ticker: str
+    current_price: float
+    last_date: str
+    horizon_days: int
+    history: list[PricePoint]
+    series: list[MultiForecastSeries]
+    best_model: Optional[str]
+    best_mape: Optional[float]
+
+
+# Порядок важен — так линии рисуются слева направо на легенде
+MULTI_MODELS_DEFAULT = ["naive", "moving_avg", "holt_winters", "arima"]
+
+MODEL_COLORS = {
+    "naive":        "#94a3b8",   # серый
+    "moving_avg":   "#f59e0b",   # янтарный
+    "holt_winters": "#10b981",   # emerald
+    "arima":        "#8b5cf6",   # violet
+}
+
+
+@app.post("/api/v1/forecast/multi", response_model=MultiForecastOut)
+def forecast_multi(
+    req: ForecastIn,
+    db: Session = Depends(get_db),
+    user: Optional[User] = Depends(get_current_user),
+):
+    """
+    Возвращает прогноз от нескольких моделей сразу для сравнения на графике.
+    Для каждой модели создаётся отдельный ForecastRun (для будущей верификации),
+    а MAPE берётся из уже завершённых прогонов (например, после backtest --save).
+    """
+    ticker = req.ticker.upper()
+    horizon = req.horizon_days
+    models = MULTI_MODELS_DEFAULT
+
+    hist = _load_history(db, ticker, settings.default_history_days)
+    if len(hist) < settings.min_history_points:
+        raise HTTPException(400, f"Недостаточно истории ({len(hist)} точек)")
+
+    last_date = hist["date"].iloc[-1]
+    last_price = float(hist["close"].iloc[-1])
+
+    # MAPE по каждой модели из завершённых прогонов
+    completed = (
+        db.query(ForecastRun)
+        .filter(
+            ForecastRun.ticker == ticker,
+            ForecastRun.status == "completed",
+            ForecastRun.mape_avg.isnot(None),
+        )
+        .all()
+    )
+    mape_by_model: dict[str, list[float]] = {}
+    for r in completed:
+        mape_by_model.setdefault(r.model, []).append(r.mape_avg)
+
+    series: list[MultiForecastSeries] = []
+    for model_name in models:
+        if model_name not in MODELS:
+            continue
+        try:
+            result = run_forecast(ticker, hist, model_name, horizon)
+        except Exception as e:
+            log.warning(f"multi/{ticker}/{model_name}: {e}")
+            continue
+
+        target = float(result["predictions"][-1])
+        pct = round((target - last_price) / last_price * 100, 2) if last_price else 0.0
+
+        # Сохраняем прогноз для будущей верификации
+        run = ForecastRun(
+            ticker=ticker,
+            model=model_name,
+            horizon_days=horizon,
+            last_hist_date=last_date,
+            last_hist_price=last_price,
+            target_price=target,
+            predicted_change_percent=pct,
+            status="active",
+            user_id=user.id if user else None,
+        )
+        db.add(run)
+        db.flush()
+        for d, p in zip(result["target_dates"], result["predictions"]):
+            db.add(ForecastPoint(run_id=run.id, target_date=d, predicted_price=p))
+
+        mapes = mape_by_model.get(model_name, [])
+        mape = round(sum(mapes) / len(mapes), 2) if mapes else None
+
+        series.append(MultiForecastSeries(
+            model=model_name,
+            mape=mape,
+            color=MODEL_COLORS.get(model_name, "#06b6d4"),
+            target_price=round(target, 2),
+            change_percent=pct,
+            points=[
+                MultiForecastPoint(date=d.isoformat(), price=round(p, 2))
+                for d, p in zip(result["target_dates"], result["predictions"])
+            ],
+        ))
+
+    if not series:
+        db.rollback()
+        raise HTTPException(500, "Не удалось построить ни одного прогноза — проверьте историю и модели")
+
+    db.commit()
+
+    # История — последние 40 точек для графика
+    history = [
+        PricePoint(date=r.date.isoformat(), price=round(r.close, 2))
+        for r in (
+            db.query(PriceHistory)
+            .filter(PriceHistory.ticker == ticker)
+            .order_by(PriceHistory.date.desc())
+            .limit(40).all()[::-1]
+        )
+    ]
+
+    # Лучшая модель — по MAPE (если есть хотя бы одна с MAPE)
+    with_mape = [s for s in series if s.mape is not None]
+    if with_mape:
+        best = min(with_mape, key=lambda s: s.mape)
+        best_model, best_mape = best.model, best.mape
+    else:
+        best_model, best_mape = None, None
+
+    return MultiForecastOut(
+        ticker=ticker,
+        current_price=round(last_price, 2),
+        last_date=last_date.isoformat(),
+        horizon_days=horizon,
+        history=history,
+        series=series,
+        best_model=best_model,
+        best_mape=best_mape,
+    )
 
 
 # ---------- Admin ----------
