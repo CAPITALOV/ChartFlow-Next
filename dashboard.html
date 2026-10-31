@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChartFlow AI — Платформа Прогнозирования Рынка</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0b0f19; color: #f3f4f6; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #0b0f19; }
+        ::-webkit-scrollbar-thumb { background: #1f2937; border-radius: 3px; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col antialiased selection:bg-cyan-500 selection:text-white">
+
+<header class="h-16 border-b border-gray-800 bg-gray-900/80 backdrop-blur-md sticky top-0 z-50 flex items-center justify-between px-4 lg:px-8">
+    <div class="flex items-center space-x-6">
+        <div class="flex items-center space-x-3">
+            <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-500 to-violet-600 flex items-center justify-center text-white shadow-lg shadow-cyan-500/20">
+                <i class="fa-solid fa-chart-line text-lg"></i>
+            </div>
+            <div>
+                <span class="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-violet-400">ChartFlow</span>
+                <span class="text-xs text-gray-500 font-mono block -mt-1">PRO V3.0</span>
+            </div>
+        </div>
+        <div class="hidden md:flex items-center space-x-2 bg-gray-800/60 p-1 rounded-xl border border-gray-700/50" id="tickerBar"></div>
+    </div>
+    <div class="flex items-center space-x-4">
+        <div class="hidden sm:flex items-center space-x-2 text-xs text-emerald-400 bg-emerald-950/40 px-3 py-1.5 rounded-full border border-emerald-800/40">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span>API: <span id="apiStatus">...</span></span>
+        </div>
+        <div id="authBlock" class="flex items-center space-x-3 border-l border-gray-800 pl-4"></div>
+    </div>
+</header>
+
+<main class="flex-1 max-w-[1600px] w-full mx-auto p-4 lg:p-6 space-y-6">
+
+    <!-- Metrics -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-gray-900/60 border border-gray-800 rounded-2xl p-4">
+            <div class="flex justify-between items-start">
+                <span class="text-xs font-medium text-gray-400">Активный актив</span>
+                <span class="p-2 rounded-lg bg-cyan-500/10 text-cyan-400 text-xs"><i class="fa-solid fa-coins"></i></span>
+            </div>
+            <h3 class="text-2xl font-bold text-white mt-2" id="metric-ticker">SBER</h3>
+            <p class="text-xs text-emerald-400 mt-1"><span id="metric-price">—</span> <span class="text-gray-500">(тек. котировка)</span></p>
+        </div>
+        <div class="bg-gray-900/60 border border-gray-800 rounded-2xl p-4">
+            <div class="flex justify-between items-start">
+                <span class="text-xs font-medium text-gray-400">Точность (MAPE)</span>
+                <span class="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 text-xs"><i class="fa-solid fa-bullseye"></i></span>
+            </div>
+            <h3 class="text-2xl font-bold text-white mt-2" id="metric-accuracy">—</h3>
+            <p class="text-xs text-gray-400 mt-1" id="metric-accuracy-label">Собираем статистику...</p>
+        </div>
+        <div class="bg-gray-900/60 border border-gray-800 rounded-2xl p-4">
+            <div class="flex justify-between items-start">
+                <span class="text-xs font-medium text-gray-400">Ожидаемый тренд</span>
+                <span class="p-2 rounded-lg bg-violet-500/10 text-violet-400 text-xs"><i class="fa-solid fa-bolt"></i></span>
+            </div>
+            <h3 class="text-2xl font-bold text-emerald-400 mt-2" id="metric-trend">—</h3>
+            <p class="text-xs text-gray-400 mt-1">Цель: <span id="metric-target">—</span></p>
+        </div>
+        <div class="bg-gray-900/60 border border-gray-800 rounded-2xl p-4">
+            <div class="flex justify-between items-start">
+                <span class="text-xs font-medium text-gray-400">Всего прогнозов</span>
+                <span class="p-2 rounded-lg bg-amber-500/10 text-amber-400 text-xs"><i class="fa-solid fa-calculator"></i></span>
+            </div>
+            <h3 class="text-2xl font-bold text-white mt-2" id="metric-total">—</h3>
+            <p class="text-xs text-gray-400 mt-1">По текущему тикеру</p>
+        </div>
+    </div>
+
+    <!-- Chart + Controls -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div class="lg:col-span-2 bg-gray-900/60 border border-gray-800 rounded-2xl p-5">
+            <div class="flex flex-wrap items-center justify-between gap-4 mb-4">
+                <div>
+                    <h2 class="text-lg font-bold text-white" id="chart-title">Прогноз SBER</h2>
+                    <p class="text-xs text-gray-400">Сплошная — реальные котировки, пунктир — модель, полоса — 95% интервал</p>
+                </div>
+            </div>
+            <div class="relative w-full h-[380px] bg-gray-950/50 rounded-xl border border-gray-800/60 p-2">
+                <canvas id="forecastChart" class="w-full h-full block"></canvas>
+                <div id="chartLoader" class="hidden absolute inset-0 bg-gray-950/80 backdrop-blur-sm flex flex-col items-center justify-center space-y-3">
+                    <div class="w-10 h-10 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
+                    <p class="text-xs text-cyan-400 font-mono">Расчёт модели...</p>
+                </div>
+            </div>
+            <div class="flex flex-wrap items-center justify-between text-xs text-gray-400 mt-4 pt-3 border-t border-gray-800/80 gap-3">
+                <div class="flex items-center space-x-6">
+                    <div class="flex items-center space-x-2"><span class="w-3 h-0.5 bg-cyan-400"></span><span>История</span></div>
+                    <div class="flex items-center space-x-2"><span class="w-3 h-0.5 bg-emerald-400 border-t border-dashed border-emerald-400"></span><span>Прогноз</span></div>
+                    <div class="flex items-center space-x-2"><span class="w-3 h-3 bg-violet-500/20 border border-violet-500/40 rounded"></span><span>95% интервал</span></div>
+                </div>
+                <button onclick="exportCSV()" class="hover:text-white flex items-center gap-1.5">
+                    <i class="fa-solid fa-download text-gray-500"></i> Экспорт CSV
+                </button>
+            </div>
+        </div>
+
+        <div class="bg-gray-900/60 border border-gray-800 rounded-2xl p-5 flex flex-col justify-between space-y-5">
+            <div>
+                <h3 class="text-base font-bold text-white flex items-center gap-2">
+                    <i class="fa-solid fa-sliders text-cyan-400"></i> Параметры
+                </h3>
+            </div>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-medium text-gray-300 mb-1.5">Тикер</label>
+                    <input type="text" id="inputTicker" value="SBER" class="w-full bg-gray-950 border border-gray-700/70 rounded-xl px-3.5 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-cyan-500 uppercase">
+                </div>
+                <div>
+                    <div class="flex justify-between text-xs font-medium mb-1.5">
+                        <span class="text-gray-300">Горизонт</span>
+                        <span class="text-cyan-400 font-mono" id="horizonVal">14 дней</span>
+                    </div>
+                    <input type="range" id="inputHorizon" min="5" max="60" value="14" oninput="document.getElementById('horizonVal').innerText = this.value + ' дней'" class="w-full accent-cyan-500 bg-gray-800 h-1.5 rounded-lg appearance-none cursor-pointer">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-300 mb-1.5">Модель</label>
+                    <select id="inputAlgorithm" class="w-full bg-gray-950 border border-gray-700/70 rounded-xl px-3.5 py-2.5 text-xs text-gray-200 focus:outline-none focus:border-cyan-500">
+                        <option value="holt_winters">Holt-Winters (эксп. сглаживание)</option>
+                        <option value="arima">ARIMA (2,1,1)</option>
+                        <option value="moving_avg">Скользящее среднее (20)</option>
+                        <option value="naive">Naive (последняя цена)</option>
+                    </select>
+                </div>
+            </div>
+            <button onclick="runCalculation()" class="w-full py-3 px-4 bg-gradient-to-r from-cyan-500 to-violet-600 hover:from-cyan-400 hover:to-violet-500 text-white font-semibold text-sm rounded-xl shadow-lg shadow-cyan-500/25 active:scale-[0.98] transition-all flex items-center justify-center space-x-2">
+                <i class="fa-solid fa-play text-xs"></i><span>Сформировать Прогноз</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- History -->
+    <div class="bg-gray-900/60 border border-gray-800 rounded-2xl p-5">
+        <div class="flex items-center justify-between mb-4">
+            <div>
+                <h3 class="text-base font-bold text-white">Журнал сохранённых расчётов</h3>
+                <p class="text-xs text-gray-400">Из БД с реальным статусом верификации</p>
+            </div>
+            <button onclick="reloadRuns()" class="text-xs text-cyan-400 hover:underline"><i class="fa-solid fa-rotate"></i> Обновить</button>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs border-collapse">
+                <thead>
+                    <tr class="border-b border-gray-800 text-gray-400 uppercase font-mono">
+                        <th class="py-3 px-4">Дата</th>
+                        <th class="py-3 px-4">Тикер</th>
+                        <th class="py-3 px-4">Модель</th>
+                        <th class="py-3 px-4">Горизонт</th>
+                        <th class="py-3 px-4">Цель</th>
+                        <th class="py-3 px-4">Δ</th>
+                        <th class="py-3 px-4">Статус</th>
+                        <th class="py-3 px-4">MAPE</th>
+                    </tr>
+                </thead>
+                <tbody id="historyTableBody" class="divide-y divide-gray-800/60 text-gray-300"></tbody>
+            </table>
+        </div>
+    </div>
+
+</main>
+
+<footer class="border-t border-gray-800 py-6 px-4 text-center text-xs text-gray-500">
+    <p>© 2026 ChartFlow / StockForecast by CAPITALOV · FastAPI + SQLAlchemy + SQLAdmin</p>
+</footer>
+
+<script>
+const API_BASE = window.location.origin;  // если фронт на другом домене — укажите полный URL
+let currentTicker = 'SBER';
+let currentData = null;
+let authToken = localStorage.getItem('cf_token');
+
+// ---------- Auth UI ----------
+function renderAuth() {
+    const block = document.getElementById('authBlock');
+    if (authToken) {
+        const me = JSON.parse(localStorage.getItem('cf_user') || '{}');
+        block.innerHTML = `
+            <div class="text-right hidden sm:block">
+                <p class="text-xs font-medium text-gray-200">${me.username || 'user'}</p>
+                <p class="text-[10px] text-gray-500">${me.role || 'user'}</p>
+            </div>
+            <button onclick="logout()" class="text-xs text-rose-400 hover:underline">Выйти</button>`;
+    } else {
+        block.innerHTML = `
+            <button onclick="showLogin()" class="text-xs bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 px-3 py-1.5 rounded-lg hover:bg-cyan-500/20">
+                <i class="fa-solid fa-user"></i> Войти
+            </button>`;
+    }
+}
+function showLogin() {
+    const u = prompt('Логин (admin / свой):');
+    if (!u) return;
+    const p = prompt('Пароль:');
+    if (!p) return;
+    fetch(`${API_BASE}/api/v1/auth/login`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({username: u, password: p}),
+    }).then(async r => {
+        if (!r.ok) throw new Error((await r.json()).detail || 'Ошибка');
+        return r.json();
+    }).then(data => {
+        authToken = data.access_token;
+        localStorage.setItem('cf_token', authToken);
+        localStorage.setItem('cf_user', JSON.stringify(data.user));
+        renderAuth();
+    }).catch(e => alert('Ошибка входа: ' + e.message));
+}
+function logout() {
+    authToken = null;
+    localStorage.removeItem('cf_token');
+    localStorage.removeItem('cf_user');
+    renderAuth();
+}
+
+// ---------- Tickers bar ----------
+async function loadTickers() {
+    try {
+        const r = await fetch(`${API_BASE}/api/v1/tickers`);
+        const data = await r.json();
+        const bar = document.getElementById('tickerBar');
+        bar.innerHTML = data.tickers.slice(0, 7).map(t =>
+            `<button onclick="selectTicker('${t}')" id="btn-${t}" class="ticker-btn px-3 py-1 text-xs font-semibold rounded-lg ${t === currentTicker ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30' : 'text-gray-400 hover:text-white'}">${t}</button>`
+        ).join('');
+    } catch (e) { console.warn('tickers load failed', e); }
+}
+function selectTicker(t) {
+    currentTicker = t;
+    document.getElementById('inputTicker').value = t;
+    document.getElementById('metric-ticker').innerText = t;
+    document.getElementById('chart-title').innerText = `Прогноз ${t}`;
+    document.querySelectorAll('.ticker-btn').forEach(b => {
+        b.className = 'ticker-btn px-3 py-1 text-xs font-semibold rounded-lg text-gray-400 hover:text-white';
+    });
+    const active = document.getElementById(`btn-${t}`);
+    if (active) active.className = 'ticker-btn px-3 py-1 text-xs font-semibold rounded-lg bg-cyan-500/20 text-cyan-400 border border-cyan-500/30';
+    reloadRuns();
+}
+
+// ---------- Chart ----------
+const canvas = document.getElementById('forecastChart');
+const ctx = canvas.getContext('2d');
+
+function resizeCanvas() {
+    const c = canvas.parentElement;
+    canvas.width = c.clientWidth * window.devicePixelRatio;
+    canvas.height = c.clientHeight * window.devicePixelRatio;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+    drawChart();
+}
+window.addEventListener('resize', resizeCanvas);
+
+function drawChart() {
+    const w = canvas.width / window.devicePixelRatio;
+    const h = canvas.height / window.devicePixelRatio;
+    ctx.clearRect(0, 0, w, h);
+    if (!currentData) {
+        ctx.fillStyle = '#6b7280';
+        ctx.font = '14px Inter';
+        ctx.textAlign = 'center';
+        ctx.fillText('Нажмите «Сформировать Прогноз»', w/2, h/2);
+        return;
+    }
+    const hist = currentData.history.map(p => p.price);
+    const fc = currentData.forecast.map(p => p.price);
+    const up = currentData.confidence_upper.map(p => p.price);
+    const lo = currentData.confidence_lower.map(p => p.price);
+    const all = [...hist, ...fc, ...up, ...lo];
+    const minV = Math.min(...all) * 0.98, maxV = Math.max(...all) * 1.02;
+
+    const PL = 55, PR = 20, PT = 20, PB = 30;
+    const cw = w - PL - PR, ch = h - PT - PB;
+    const totalPoints = hist.length + fc.length - 1;
+
+    const getX = i => PL + (i / Math.max(1, totalPoints - 1)) * cw;
+    const getY = v => PT + ch - ((v - minV) / (maxV - minV)) * ch;
+
+    // grid
+    ctx.strokeStyle = '#1f2937'; ctx.lineWidth = 0.5;
+    for (let i = 0; i <= 5; i++) {
+        const y = PT + (ch / 5) * i;
+        ctx.beginPath(); ctx.moveTo(PL, y); ctx.lineTo(w - PR, y); ctx.stroke();
+        ctx.fillStyle = '#6b7280'; ctx.font = '10px Inter'; ctx.textAlign = 'right';
+        ctx.fillText((maxV - (i/5)*(maxV-minV)).toFixed(2), PL - 8, y + 3);
+    }
+
+    const startHistIdx = hist.length - 1;
+
+    // confidence band
+    ctx.beginPath();
+    for (let i = 0; i < up.length; i++) {
+        const x = getX(startHistIdx + 1 + i), y = getY(up[i]);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    for (let i = lo.length - 1; i >= 0; i--) {
+        const x = getX(startHistIdx + 1 + i), y = getY(lo[i]);
+        ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(139, 92, 246, 0.12)';
+    ctx.fill();
+
+    // history
+    ctx.beginPath(); ctx.strokeStyle = '#06b6d4'; ctx.lineWidth = 2.5;
+    hist.forEach((v, i) => {
+        const x = getX(i), y = getY(v);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // forecast
+    ctx.beginPath(); ctx.strokeStyle = '#10b981'; ctx.lineWidth = 2.5; ctx.setLineDash([5, 4]);
+    ctx.moveTo(getX(startHistIdx), getY(hist[hist.length - 1]));
+    fc.forEach((v, i) => ctx.lineTo(getX(startHistIdx + 1 + i), getY(v)));
+    ctx.stroke(); ctx.setLineDash([]);
+
+    // current dot
+    ctx.beginPath();
+    ctx.arc(getX(startHistIdx), getY(hist[hist.length - 1]), 6, 0, Math.PI * 2);
+    ctx.fillStyle = '#06b6d4'; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke();
+}
+
+// ---------- Forecast call ----------
+async function runCalculation() {
+    const loader = document.getElementById('chartLoader');
+    loader.classList.remove('hidden');
+
+    const ticker = document.getElementById('inputTicker').value.toUpperCase().trim();
+    const horizon = parseInt(document.getElementById('inputHorizon').value);
+    const algorithm = document.getElementById('inputAlgorithm').value;
+
+    try {
+        const headers = {'Content-Type': 'application/json'};
+        if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+        const res = await fetch(`${API_BASE}/api/v1/forecast`, {
+            method: 'POST', headers,
+            body: JSON.stringify({ticker, horizon_days: horizon, algorithm}),
+        });
+        if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+        const data = await res.json();
+        currentData = data;
+        currentTicker = data.ticker;
+
+        document.getElementById('metric-ticker').innerText = data.ticker;
+        document.getElementById('metric-price').innerText = data.current_price + ' ₽';
+        document.getElementById('metric-accuracy').innerText = data.accuracy_mape != null ? data.accuracy_mape + '%' : '—';
+        document.getElementById('metric-accuracy-label').innerText = data.accuracy_mape_label;
+        document.getElementById('metric-target').innerText = data.target_price + ' ₽';
+
+        const pct = data.predicted_change_percent;
+        const trendEl = document.getElementById('metric-trend');
+        trendEl.className = `text-2xl font-bold ${pct >= 0 ? 'text-emerald-400' : 'text-rose-400'} mt-2`;
+        trendEl.innerText = `${pct >= 0 ? '+' : ''}${pct}%`;
+
+        document.getElementById('chart-title').innerText = `Прогноз ${data.ticker} · ${data.model}`;
+        drawChart();
+        reloadRuns();
+    } catch (e) {
+        alert('Ошибка прогноза: ' + e.message);
+    } finally {
+        loader.classList.add('hidden');
+    }
+}
+
+// ---------- Runs ----------
+async function reloadRuns() {
+    try {
+        const r = await fetch(`${API_BASE}/api/v1/runs/${currentTicker}?limit=15`);
+        const rows = await r.json();
+        const tbody = document.getElementById('historyTableBody');
+        tbody.innerHTML = '';
+        if (!rows.length) {
+            tbody.innerHTML = '<tr><td colspan="8" class="py-6 text-center text-gray-500">Прогнозов пока нет</td></tr>';
+        }
+        rows.forEach(r => {
+            const pct = r.predicted_change_percent || 0;
+            const isPos = pct >= 0;
+            const badgeCls = isPos ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20';
+            const statusBadge = r.status === 'completed'
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                : r.status === 'failed' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                : 'bg-amber-500/10 text-amber-400 border-amber-500/20';
+            const mapeStr = r.mape != null ? r.mape.toFixed(2) + '%' : '—';
+            tbody.innerHTML += `
+                <tr class="hover:bg-gray-800/30">
+                    <td class="py-3 px-4 font-mono text-gray-400">${r.created_at.slice(0,16).replace('T',' ')}</td>
+                    <td class="py-3 px-4 font-bold text-white">${r.ticker}</td>
+                    <td class="py-3 px-4">${r.model}</td>
+                    <td class="py-3 px-4">${r.horizon_days}д</td>
+                    <td class="py-3 px-4 font-mono">${r.target_price != null ? r.target_price.toFixed(2) + ' ₽' : '—'}</td>
+                    <td class="py-3 px-4"><span class="px-2 py-0.5 rounded border font-bold ${badgeCls}">${isPos?'+':''}${pct.toFixed(1)}%</span></td>
+                    <td class="py-3 px-4"><span class="px-2 py-0.5 rounded border ${statusBadge}">${r.status}</span></td>
+                    <td class="py-3 px-4 font-mono">${mapeStr}</td>
+                </tr>`;
+        });
+        document.getElementById('metric-total').innerText = rows.length;
+    } catch (e) { console.warn('runs load failed', e); }
+}
+
+// ---------- Export ----------
+function exportCSV() {
+    if (!currentData) return alert('Сначала сформируйте прогноз');
+    const lines = ['date,type,price'];
+    currentData.history.forEach(p => lines.push(`${p.date},history,${p.price}`));
+    currentData.forecast.forEach(p => lines.push(`${p.date},forecast,${p.price}`));
+    currentData.confidence_upper.forEach(p => lines.push(`${p.date},upper,${p.price}`));
+    currentData.confidence_lower.forEach(p => lines.push(`${p.date},lower,${p.price}`));
+    const blob = new Blob([lines.join('\n')], {type: 'text/csv'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `chartflow_${currentTicker}_${Date.now()}.csv`;
+    a.click();
+}
+
+// ---------- Init ----------
+async function checkApi() {
+    try {
+        const r = await fetch(`${API_BASE}/`);
+        const d = await r.json();
+        document.getElementById('apiStatus').innerText = d.status === 'online' ? 'Active' : 'Error';
+    } catch { document.getElementById('apiStatus').innerText = 'Offline'; }
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+    renderAuth();
+    checkApi();
+    loadTickers();
+    resizeCanvas();
+    reloadRuns();
+    fetch(`${API_BASE}/api/v1/price/${currentTicker}`).then(r => r.json()).then(d => {
+        if (d.price) document.getElementById('metric-price').innerText = d.price.toFixed(2) + ' ₽';
+    }).catch(() => {});
+});
+</script>
+</body>
+</html>
